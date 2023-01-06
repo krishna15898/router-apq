@@ -1,0 +1,11 @@
+supergraph:
+  listen: 127.0.0.1:4000
+  path: /graphql
+traffic_shaping:
+  subgraphs:
+    accounts:
+      timeout: 1000ms
+      apq_enabled: false
+    reviews:
+      timeout: 1000ms
+      apq_enabled: true

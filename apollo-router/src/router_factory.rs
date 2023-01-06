@@ -259,7 +259,7 @@ pub(crate) async fn create_plugins(
         "apollo.csrf",
         "apollo.telemetry",
     ];
-
+    println!("{:?}",configuration.clone().plugins());
     let mut errors = Vec::new();
     let plugin_registry: Vec<&'static Lazy<PluginFactory>> = crate::plugin::plugins().collect();
     let mut plugin_instances = Vec::new();

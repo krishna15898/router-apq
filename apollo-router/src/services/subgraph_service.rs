@@ -41,6 +41,7 @@ use super::layers::content_negociation::GRAPHQL_JSON_RESPONSE_HEADER_VALUE;
 use super::Plugins;
 use crate::error::FetchError;
 use crate::graphql;
+use crate::json_ext::Object;
 use crate::plugins::telemetry::LOGGING_DISPLAY_BODY;
 use crate::plugins::telemetry::LOGGING_DISPLAY_HEADERS;
 use crate::services::layers::apq;
@@ -140,9 +141,9 @@ impl tower::Service<crate::SubgraphRequest> for SubgraphService {
             subgraph_request,
             context,
             ..
-        } = request.clone();
+        } = &request;
 
-        let (_, body) = subgraph_request.into_parts();
+        let body = subgraph_request.clone().into_body();
 
         let clone = self.client.clone();
         let client = std::mem::replace(&mut self.client, clone);
@@ -151,23 +152,23 @@ impl tower::Service<crate::SubgraphRequest> for SubgraphService {
         let arc_apq_enabled = self.apq_enabled.clone();
 
         let make_calls = async move {
-            // If APQ is not enabled, simply make the graphql call
-            // with the same request body.
-            let apq_enabled = arc_apq_enabled.as_ref();
-            if !apq_enabled.load(Relaxed) {
-                return call_http(request, body, context, client, service_name).await;
-            }
-
-            // Else, if APQ is enabled,
-            // Calculate the query hash and try the request with
-            // a persistedQuery instead of the whole query.
             let graphql::Request {
                 query,
                 operation_name,
                 variables,
                 extensions,
-            } = body.clone();
+            } = &body;
 
+            // If APQ is not enabled, simply make the graphql call
+            // with the same request body.
+            let apq_enabled = arc_apq_enabled.as_ref();
+            if !apq_enabled.load(Relaxed) {
+                return call_http(&request, query, operation_name, variables, extensions, context, client, service_name).await;
+            }
+
+            // Else, if APQ is enabled,
+            // Calculate the query hash and try the request with
+            // a persistedQuery instead of the whole query.
             let hash_value = apq::calculate_hash_for_query(query.as_deref().unwrap_or_default());
 
             let persisted_query = serde_json_bytes::json!({
@@ -178,37 +179,44 @@ impl tower::Service<crate::SubgraphRequest> for SubgraphService {
             let mut extensions_with_apq = extensions.clone();
             extensions_with_apq.insert(PERSISTED_QUERY_KEY, persisted_query);
 
-            let mut apq_body = graphql::Request {
-                query: None,
-                operation_name: operation_name,
-                variables: variables,
-                extensions: extensions_with_apq,
-            };
-
             let response = call_http(
-                request.clone(),
-                apq_body.clone(),
-                context.clone(),
+                &request,
+                &None,
+                operation_name,
+                variables,
+                &extensions_with_apq,
+                context,
                 client.clone(),
                 service_name.clone(),
-            )
-            .await?;
+            ).await?;
 
             // Check the error for the request with only persistedQuery.
             // If PersistedQueryNotSupported, disable APQ for this subgraph
             // If PersistedQueryNotFound, add the original query to the request and retry.
             // Else, return the response like before.
-            let gql_response = response.response.body();
-            match get_apq_error(gql_response) {
+            match get_apq_error(response.response.body()) {
                 APQError::PersistedQueryNotSupported => {
                     apq_enabled.store(false, Relaxed);
-                    return call_http(request, body, context, client, service_name).await;
+                    return call_http(&request,
+                                     query,
+                                     operation_name,
+                                     variables,
+                                     extensions,
+                                     context,
+                                     client,
+                                     service_name).await
                 }
                 APQError::PersistedQueryNotFound => {
-                    apq_body.query = query;
-                    return call_http(request, apq_body, context, client, service_name).await;
+                    return call_http(&request,
+                                     query,
+                                     operation_name,
+                                     variables,
+                                     &extensions_with_apq,
+                                     context,
+                                     client,
+                                     service_name).await
                 }
-                _ => return Ok(response),
+                _ => return Ok(response)
             }
         };
 
@@ -218,19 +226,30 @@ impl tower::Service<crate::SubgraphRequest> for SubgraphService {
 
 /// call_http makes http calls with modified graphql::Request (body)
 async fn call_http(
-    request: crate::SubgraphRequest,
-    body: graphql::Request,
-    context: Context,
+    request: &crate::SubgraphRequest,
+    query: &Option<String>,
+    operation_name: &Option<String>,
+    variables: &Object,
+    extensions: &Object,
+    context: &Context,
     mut client: Decompression<Client<HttpsConnector<HttpConnector>>>,
     service_name: String,
 ) -> Result<crate::SubgraphResponse, BoxError> {
     let crate::SubgraphRequest {
-        subgraph_request, ..
+        subgraph_request: http::Request{
+            head: parts, ..
+        }, ..
     } = request;
 
-    let (parts, _) = subgraph_request.into_parts();
+    let body = graphql::Request {
+        query: query.clone(),
+        operation_name: operation_name.clone(),
+        variables: variables.clone(),
+        extensions: extensions.clone(),
+    };
 
     let body = serde_json::to_string(&body).expect("JSON serialization should not fail");
+    println!("-----------------REQUEST-{:?}-----------------\n{:?}\n---------------------------",service_name.clone(),body.clone());
     let compressed_body = compress(body, &parts.headers)
         .instrument(tracing::debug_span!("body_compression"))
         .await
@@ -360,9 +379,10 @@ async fn call_http(
             })
         })?;
 
+    println!("--------------RESPONSE-----------------\n{:?}\n---------------------------",graphql.clone());
     let resp = http::Response::from_parts(parts, graphql);
 
-    Ok(crate::SubgraphResponse::new_from_response(resp, context))
+    Ok(crate::SubgraphResponse::new_from_response(resp, context.clone()))
 }
 
 fn get_apq_error(gql_response: &graphql::Response) -> APQError {
