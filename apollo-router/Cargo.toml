@@ -205,6 +205,7 @@ uname = "0.1.1"
 uname = "0.1.1"
 
 [dev-dependencies]
+criterion = {version = "0.4", features = ["async_futures"]}
 insta = { version = "1.23.0", features = ["json", "redactions", "yaml"] }
 introspector-gadget = "0.2.0"
 maplit = "1.0.2"
@@ -238,3 +239,7 @@ tonic-build = "0.8.4"
 [[test]]
 name = "integration_tests"
 path = "tests/integration_tests.rs"
+
+[[bench]]
+name = "my_benchmark"
+harness = false

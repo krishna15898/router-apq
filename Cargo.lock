@@ -187,6 +187,7 @@ dependencies = [
  "bytes",
  "clap 4.0.32",
  "console-subscriber",
+ "criterion",
  "dashmap",
  "derivative",
  "derive_more",

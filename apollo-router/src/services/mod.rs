@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 pub(crate) use self::execution_service::*;
 pub(crate) use self::query_planner::*;
-pub(crate) use self::subgraph_service::*;
+pub use self::subgraph_service::*;
 pub(crate) use self::supergraph_service::*;
 use crate::graphql::Request;
 use crate::http_ext;

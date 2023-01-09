@@ -19,6 +19,8 @@
 #![cfg_attr(feature = "failfast", allow(unreachable_code))]
 #![warn(unreachable_pub)]
 #![warn(missing_docs)]
+#![feature(test)]
+#![feature(poll_ready)]
 
 macro_rules! failfast_debug {
     ($($tokens:tt)+) => {{
@@ -60,7 +62,7 @@ mod http_server_factory;
 mod introspection;
 pub mod layers;
 mod plugins;
-mod query_planner;
+pub mod query_planner;
 mod request;
 mod response;
 mod router;
