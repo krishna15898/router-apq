@@ -39,6 +39,7 @@ use tower_http::decompression::DecompressionLayer;
 use tracing::Instrument;
 use tracing::Span;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
+use std::time;
 
 use super::layers::content_negociation::GRAPHQL_JSON_RESPONSE_HEADER_VALUE;
 use super::Plugins;
@@ -161,10 +162,9 @@ impl tower::Service<crate::SubgraphRequest> for SubgraphService {
             // with the same request body.
             let apq_enabled = arc_apq_enabled.as_ref();
             if !apq_enabled.load(Relaxed) {
-                println!("try 1: apq was disabled");
+                // println!("try 1:no  apq: {:?}", time::SystemTime::now());
                 return call_http(request, body, context, client, service_name).await;
             }
-            println!("try 1: apq was enabled");
             // Else, if APQ is enabled,
             // Calculate the query hash and try the request with
             // a persistedQuery instead of the whole query.
@@ -192,6 +192,7 @@ impl tower::Service<crate::SubgraphRequest> for SubgraphService {
                 extensions: extensions_with_apq,
             };
 
+            // println!("try 1:yes apq: {:?}", time::SystemTime::now());
             let response = call_http(
                 request.clone(),
                 apq_body.clone(),
@@ -208,13 +209,13 @@ impl tower::Service<crate::SubgraphRequest> for SubgraphService {
             let gql_response = response.response.body();
             match get_apq_error(gql_response) {
                 APQError::PersistedQueryNotSupported => {
-                    println!("try 2: not supported");
                     apq_enabled.store(false, Relaxed);
+                    // println!("try 2:sup apq: {:?}", time::SystemTime::now());
                     return call_http(request, body, context, client, service_name).await;
                 }
                 APQError::PersistedQueryNotFound => {
-                    println!("try 2: not found");
                     apq_body.query = query;
+                    // println!("try 2:fou apq: {:?}", time::SystemTime::now());
                     return call_http(request, apq_body, context, client, service_name).await;
                 }
                 _ => return Ok(response),
@@ -295,7 +296,7 @@ async fn call_http(
             serde_json::to_string(&Response {
                 data: Some(Value::String(ByteString::from("test"))),
                 errors: vec![Error::builder()
-                    .message(PERSISTED_QUERY_NOT_SUPPORTED_MESSAGE)
+                    .message(PERSISTED_QUERY_NOT_FOUND_MESSAGE)
                     .extension_code("Random code")
                     .build()],
                 ..Response::default()
